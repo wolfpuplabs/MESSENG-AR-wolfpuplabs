@@ -384,8 +384,6 @@
       border-radius: 50%;
       background: radial-gradient(circle at 32% 28%, #fff 0%, var(--sun) 22%, var(--bubblegum) 58%, var(--violet) 100%);
       box-shadow: 0 0 0 8px rgba(122,92,255,.18), 0 14px 30px -10px rgba(255,122,198,.7);
-      display: grid; place-items: center;
-      font-size: 34px; line-height: 1;
       animation: bob 3.4s ease-in-out infinite;
     }
     @keyframes bob { 50% { transform: translateY(-7px) rotate(-4deg); } }
@@ -490,7 +488,8 @@
       transition: transform .16s cubic-bezier(.2,1.4,.4,1), box-shadow .2s;
       animation: hover-float 3.2s ease-in-out infinite;
     }
-    .bub-event::before { content: "🐲"; font-size: 15px; }
+    .bub-event::before { content: ""; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+      background: var(--mint); box-shadow: 0 0 10px var(--mint); }
     .bub-event:active { transform: scale(.94); box-shadow: 0 0 30px -4px rgba(91,233,201,.8); }
     @keyframes hover-float { 50% { transform: translateY(-4px); } }
 
@@ -548,7 +547,8 @@
       border-radius: 18px; color: var(--cream);
       border: 1.5px solid rgba(91,233,201,.35);
     }
-    #replyBanner::before { content: "↩"; margin-right: 8px; color: var(--mint); font-weight: 800; }
+    #replyBanner::before { content: ""; width: 4px; height: 18px; border-radius: 4px; background: var(--mint);
+      margin-right: 10px; flex-shrink: 0; box-shadow: 0 0 8px var(--mint); }
 
     .mic-on { background: linear-gradient(135deg, #FF5C8A, var(--bubblegum)) !important; color: #fff !important;
       border-color: rgba(255,255,255,.4) !important; animation: pulse 1.1s ease-in-out infinite; }
@@ -618,7 +618,10 @@
     @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 16px) scale(.9); } }
 
     .empty { margin: auto; text-align: center; padding: 24px; animation: pop-in .5s cubic-bezier(.2,1.3,.4,1) both; }
-    .empty .egg { font-size: 54px; display: block; margin-bottom: 12px; animation: bob 3.4s ease-in-out infinite; }
+    .empty .egg { display: block; width: 62px; height: 62px; margin: 0 auto 16px; border-radius: 50%;
+      background: radial-gradient(circle at 32% 28%, #fff 0%, var(--sun) 20%, var(--bubblegum) 55%, var(--violet) 100%);
+      box-shadow: 0 0 0 8px rgba(122,92,255,.14), 0 14px 30px -10px rgba(255,122,198,.6);
+      animation: bob 3.4s ease-in-out infinite; }
     .empty h3 { font-family: 'Baloo 2', 'Trebuchet MS', system-ui, sans-serif; font-size: 21px; font-weight: 700; margin: 0 0 6px; color: var(--cream); }
     .empty p { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--lilac); line-height: 1.6; max-width: 260px; }
 
@@ -684,7 +687,7 @@
 
 <div id="screen-share" class="screen overlay" hidden>
   <div class="glass-panel">
-    <div class="capsule">✉️</div>
+    <div class="capsule"></div>
     <h2 id="shareTitleUI">Pesan Siap Terbang!</h2>
     <p id="shareDescUI">Bagikan link ini ke penerima. Saat dibuka, kurir akan muncul di AR mengantar pesanmu.</p>
     <div id="shareLink"></div>
@@ -698,7 +701,7 @@
 
 <div id="screen-incoming" class="screen overlay" hidden>
   <div class="glass-panel">
-    <div class="capsule">🐲</div>
+    <div class="capsule"></div>
     <h2 id="incTitleUI">Kurir Tiba!</h2>
     <p id="incFrom"></p>
     <button id="btnAccept" class="primary-btn" style="display: none; width: 100%;">Buka di AR</button>
@@ -708,7 +711,7 @@
 
 <div id="nameModal" class="screen overlay" hidden>
   <div class="glass-panel">
-    <div class="capsule">🥚</div>
+    <div class="capsule"></div>
     <h2 id="nameTitleUI">Selamat Datang</h2>
     <p id="nameDescUI">Masukkan nama kamu sebagai pengirim:</p>
     <input id="nameInput" maxlength="16" placeholder="Nama...">
@@ -753,16 +756,16 @@
     </a-entity>
 
     <a-entity id="dragon-entity" visible="false" position="0 0 0">
-      <a-entity id="magic-burst" visible="false" position="0 0.1 0">
+      <a-entity id="magic-burst" visible="false" position="0 0.12 0" scale="1.6 1.6 1.6">
         <a-ring id="magic-ring" color="#FF7AC6" radius-inner="0.05" radius-outer="0.1" rotation="-90 0 0" material="shader: flat; transparent: true; opacity: 1"></a-ring>
         <a-sphere id="magic-sphere" color="#ffffff" radius="0.05" material="shader: flat; transparent: true; opacity: 1"></a-sphere>
       </a-entity>
 
       <a-entity id="dragon-mover" random-flight spatial-tts="refDistance: 1; maxDistance: 10; rolloffFactor: 1">
-        <a-entity gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.002 0.002 0.002" position="0 0 0" animation-mixer></a-entity>
-        <a-entity id="dragon-fire-dust" fire-dust position="0 0.02 -0.05"></a-entity>
+        <a-entity gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.006 0.006 0.006" position="0 0 0" animation-mixer></a-entity>
+        <a-entity id="dragon-fire-dust" fire-dust position="0 0.06 -0.15" scale="2.4 2.4 2.4"></a-entity>
 
-        <a-entity id="dragon-bubble" look-at="[camera]" position="0 0.45 0" visible="false">
+        <a-entity id="dragon-bubble" look-at="[camera]" position="0 0.8 0" visible="false">
           <a-entity id="bubble-bg" position="0 0 -0.01">
             <a-plane id="bg-main" width="0.8" height="0.12" color="#140A2E" material="shader: flat; transparent: true; opacity: 0.82"></a-plane>
             <a-plane id="bg-cross" width="0.72" height="0.2" color="#140A2E" material="shader: flat; transparent: true; opacity: 0.82"></a-plane>
@@ -901,7 +904,7 @@
     if (!msgs.length) {
       const e = document.createElement('div');
       e.className = 'empty';
-      e.innerHTML = '<span class="egg">🥚</span><h3>' + (lang === 'id' ? 'Belum ada kiriman' : 'No deliveries yet') + '</h3>' +
+      e.innerHTML = '<span class="egg"></span><h3>' + (lang === 'id' ? 'Belum ada kiriman' : 'No deliveries yet') + '</h3>' +
                     '<p>' + (lang === 'id'
                       ? 'Tulis pesan, kirim linknya, lalu naga kurir akan mengantarnya di dunia nyata.'
                       : 'Write a message, send the link, and the dragon courier delivers it in the real world.') + '</p>';
@@ -1420,7 +1423,7 @@
         document.getElementById('bg-bl').setAttribute('position', `${-offsetX} ${-offsetY} 0`); document.getElementById('bg-br').setAttribute('position', `${offsetX} ${-offsetY} 0`);
         document.getElementById('bg-tail').setAttribute('position', `0 ${-dynHeight / 2} 0`);
 
-        const dragonHeadY = 0.35; bubble.setAttribute('position', `0 ${dragonHeadY + (dynHeight / 2)} 0`); bubble.setAttribute('visible', 'true');
+        const dragonHeadY = 0.62; bubble.setAttribute('position', `0 ${dragonHeadY + (dynHeight / 2)} 0`); bubble.setAttribute('visible', 'true');
 
         if (autoDelete && currentPayload.id) {
             db.ref('messages/' + currentPayload.id).remove();
