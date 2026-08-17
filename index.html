@@ -1096,7 +1096,7 @@
     }
   };
 
-  let lang = store.get('sar_lang', 'id');
+  let lang = store.get('sar_lang', 'en');
 
   function applyLang() {
     const t = i18n[lang];
@@ -1550,6 +1550,15 @@
     $('#arHint').textContent = AR.mode === 'diorama' ? i18n[lang].arHintDio : i18n[lang].arHintPoint;
   }
 
+  // Kanvas 3D tidak ikut menghitung ulang ukurannya saat layar diputar -> gambar ketarik.
+  // Paksa hitung ulang setelah layout selesai berubah.
+  function resizeScene() {
+    const s = document.querySelector('a-scene');
+    if (s && s.resize) { try { s.resize(); } catch (e) {} }
+  }
+  window.addEventListener('orientationchange', () => { setTimeout(resizeScene, 250); setTimeout(resizeScene, 600); });
+  window.addEventListener('resize', () => { setTimeout(resizeScene, 100); });
+
   function stopFallbackAR() {
     AR.active = false;
     if (AR.stream) { AR.stream.getTracks().forEach(tr => tr.stop()); AR.stream = null; }
@@ -1646,7 +1655,8 @@
     const wrapper = $('#scene-wrapper'); wrapper.style.visibility = 'visible'; wrapper.style.zIndex = '100';
     $('#ar-ui-container').hidden = false;
     $('#dragon-entity').setAttribute('visible', 'false'); $('#dragon-bubble').setAttribute('visible', 'false');
-    window.speechSynthesis.cancel();
+    // cancel() saat tidak ada yang bicara merusak engine bicara Safari
+    try { if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel(); } catch (e) {}
     $('#btnPlace').hidden = true; $('#btnReply').hidden = true; $('#btnBack').hidden = true;
     $('#arHint').hidden = false; $('#arHint').textContent = i18n[lang].arHintLoad;
 
