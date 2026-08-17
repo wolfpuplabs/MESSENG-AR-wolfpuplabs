@@ -428,28 +428,25 @@
       }
     });
 
-    /* ========= KAMERA GYRO SADAR-ORIENTASI-LAYAR =========
-       look-controls bawaan A-Frame mengabaikan sudut layar, jadi tampilan miring
-       saat HP/tablet dipakai landscape. Komponen ini menghitung sendiri kuaternion
-       kamera dari deviceorientation + screen.orientation.angle. ================= */
+    /* ========= KAMERA GYRO BEBAS-ROLL =========
+       look-controls bawaan A-Frame (dan rumus DeviceOrientationControls standar)
+       mengandalkan sudut orientasi layar, yang di iPad tidak bisa dipercaya:
+       orientasi "natural" iPad adalah landscape, jadi angle=0 bisa berarti
+       landscape ATAU portrait tergantung perangkat -> gambar miring 90 derajat.
+
+       Solusinya: jangan pakai sudut layar sama sekali. Ambil arah pandang kamera
+       dari sensor (vektor ini kebal terhadap rotasi layar), lalu bangun ulang
+       orientasi dengan roll dipaksa nol. Horizon dijamin selalu datar. ========= */
     AFRAME.registerComponent('magic-window', {
       init: function () {
         this.active = false;
-        this.orient = 0;
         this.deviceOrientation = null;
+        this.yaw = 0;
 
         this.euler = new THREE.Euler();
-        this.q0 = new THREE.Quaternion();
+        this.q = new THREE.Quaternion();
         this.q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90deg sumbu X
-        this.zee = new THREE.Vector3(0, 0, 1);
-
-        this.readAngle = () => {
-          let angle = 0;
-          if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
-          else if (typeof window.orientation === 'number') angle = window.orientation;
-          return THREE.MathUtils.degToRad(angle);
-        };
-        this.onOrientationChange = () => { this.orient = this.readAngle(); };
+        this.fwd = new THREE.Vector3();
 
         this.onDeviceOrientation = (e) => {
           if (e.alpha === null && e.beta === null && e.gamma === null) return;
@@ -461,12 +458,7 @@
           }
         };
 
-        this.onOrientationChange();
         window.addEventListener('deviceorientation', this.onDeviceOrientation);
-        window.addEventListener('orientationchange', this.onOrientationChange);
-        if (screen.orientation && screen.orientation.addEventListener) {
-          screen.orientation.addEventListener('change', this.onOrientationChange);
-        }
       },
 
       tick: function () {
@@ -478,19 +470,30 @@
         const beta  = THREE.MathUtils.degToRad(d.beta  || 0);
         const gamma = THREE.MathUtils.degToRad(d.gamma || 0);
 
+        // Kuaternion mentah sensor (frame perangkat, TANPA koreksi sudut layar).
         this.euler.set(beta, alpha, -gamma, 'YXZ');
-        const q = this.el.object3D.quaternion;
-        q.setFromEuler(this.euler);
-        q.multiply(this.q1);                                       // layar tegak -> pandangan ke depan
-        q.multiply(this.q0.setFromAxisAngle(this.zee, -this.readAngle())); // koreksi rotasi layar (dibaca tiap frame)
+        this.q.setFromEuler(this.euler);
+        this.q.multiply(this.q1);
+
+        // Arah kamera belakang = -Z dari kuaternion ini. Vektor ini TIDAK terpengaruh
+        // rotasi layar (rotasi layar cuma memutar di sekitar sumbu pandang itu sendiri),
+        // jadi ia selalu benar tanpa perlu tahu screen.orientation.angle sama sekali.
+        this.fwd.set(0, 0, -1).applyQuaternion(this.q).normalize();
+
+        // Bangun ulang orientasi kamera dengan roll = 0 (horizon selalu datar,
+        // sama seperti gambar kamera yang juga selalu tegak mengikuti layar).
+        const pitch = Math.asin(THREE.MathUtils.clamp(this.fwd.y, -1, 1));
+
+        // Saat menunduk/mendongak hampir tegak lurus, arah yaw jadi tak stabil:
+        // pertahankan yaw sebelumnya supaya gambar tidak berputar liar.
+        const horiz = Math.sqrt(this.fwd.x * this.fwd.x + this.fwd.z * this.fwd.z);
+        if (horiz > 0.02) this.yaw = Math.atan2(-this.fwd.x, -this.fwd.z);
+
+        this.el.object3D.rotation.set(pitch, this.yaw, 0, 'YXZ');
       },
 
       remove: function () {
         window.removeEventListener('deviceorientation', this.onDeviceOrientation);
-        window.removeEventListener('orientationchange', this.onOrientationChange);
-        if (screen.orientation && screen.orientation.removeEventListener) {
-          screen.orientation.removeEventListener('change', this.onOrientationChange);
-        }
       }
     });
 
