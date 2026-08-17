@@ -432,11 +432,6 @@
        look-controls bawaan A-Frame mengabaikan sudut layar, jadi tampilan miring
        saat HP/tablet dipakai landscape. Komponen ini menghitung sendiri kuaternion
        kamera dari deviceorientation + screen.orientation.angle. ================= */
-    /* Kalibrasi manual kemiringan: escape hatch kalau deteksi otomatis meleset
-       di device/browser tertentu. Disimpan di window supaya bisa diubah dari
-       tombol kalibrasi di script utama, dan diingat per-browser lewat localStorage. */
-    window.manualRollFix = THREE.MathUtils.degToRad(parseFloat(localStorage.getItem('sar_rollfix') || '0'));
-
     AFRAME.registerComponent('magic-window', {
       init: function () {
         this.active = false;
@@ -489,7 +484,7 @@
         const q = this.el.object3D.quaternion;
         q.setFromEuler(this.euler);
         q.multiply(this.q1);                                       // layar tegak -> pandangan ke depan
-        q.multiply(this.q0.setFromAxisAngle(this.zee, -(this.orient + window.manualRollFix))); // koreksi rotasi layar + kalibrasi manual
+        q.multiply(this.q0.setFromAxisAngle(this.zee, -this.orient)); // koreksi rotasi layar
       },
 
       remove: function () {
@@ -860,14 +855,6 @@
       background: rgba(12,6,32,.6); border: 1.5px solid rgba(91,233,201,.35);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     }
-    #btnFixTilt {
-      justify-self: end; margin-left: 8px; width: 40px; height: 40px; border-radius: 14px;
-      border: 1.5px solid rgba(255,209,102,.4); background: rgba(12,6,32,.6); color: var(--sun);
-      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); pointer-events: auto;
-      display: flex; align-items: center; justify-content: center; cursor: pointer;
-      transition: transform .16s cubic-bezier(.2,1.4,.4,1);
-    }
-    #btnFixTilt:active { transform: scale(.88) rotate(90deg); }
     #arHint {
       align-self: center; text-align: center; color: #fff; font-weight: 700; font-size: 15px;
       background: rgba(12,6,32,.62); padding: 12px 22px; border-radius: 999px;
@@ -999,12 +986,7 @@
   <div class="ar-top">
     <div><button id="btnBackAR" class="iconbtn" title="Keluar AR">&lt;</button></div>
     <h1 class="logo">MESSENG-AR</h1>
-    <div style="display:flex; align-items:center; justify-self:end;">
-      <div id="arMode">AR</div>
-      <button id="btnFixTilt" title="Betulkan kemiringan" hidden>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><polyline points="21 3 21 9 15 9"></polyline></svg>
-      </button>
-    </div>
+    <div id="arMode">AR</div>
   </div>
   <div id="arHint">Pindai lantai hingga cincin muncul.</div>
   <div id="arBtns">
@@ -1412,11 +1394,26 @@
         voice: (lang === 'en') ? "af_heart" : "af_bella"
       });
 
+      let settled = false;
+
+      // Jaring pengaman: kalau worker AI tidak pernah membalas (macet/gagal diam-diam,
+      // pernah terjadi di WASM Safari), jangan diam selamanya -- pindah ke suara bawaan browser.
+      const waitTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
+        console.warn('TTS worker tidak merespons, pindah ke speechSynthesis bawaan.');
+        fallbackTTS(payload.text, onFinish);
+      }, 6000);
+
       const handleWorkerResponse = (e) => {
+        if (settled) return;
         if (e.data.status === 'done') {
+          settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
           spatialComp.playWorkerAudio(e.data.pcmData, onFinish);
         } else if (e.data.status === 'error') {
+          settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
           fallbackTTS(payload.text, onFinish);
         }
@@ -1458,19 +1455,7 @@
     const el = $('#arMode'); if (!el) return;
     const t = i18n[lang];
     el.textContent = AR.mode === 'webxr' ? t.modeXR : (AR.mode === 'camera' ? t.modeCam : (AR.mode === 'diorama' ? t.modeDio : 'AR'));
-    $('#btnFixTilt').hidden = (AR.mode === 'webxr' || !AR.mode);
   }
-
-  // Kalibrasi manual: tap untuk memutar koreksi kemiringan +90 derajat.
-  // Berguna kalau deteksi otomatis screen.orientation/window.orientation meleset
-  // di kombinasi device+browser tertentu. Diingat per-browser.
-  $('#btnFixTilt').onclick = () => {
-    let deg = (THREE.MathUtils.radToDeg(window.manualRollFix) + 90) % 360;
-    if (deg > 180) deg -= 360;
-    window.manualRollFix = THREE.MathUtils.degToRad(deg);
-    localStorage.setItem('sar_rollfix', String(deg));
-    toast((lang === 'id' ? 'Kemiringan disesuaikan (' : 'Tilt adjusted (') + Math.round(deg) + '°)');
-  };
 
   // Izin gyro iOS 13+ harus dipanggil langsung dari gesture user
   function requestGyroPermission() {
@@ -1661,6 +1646,19 @@
   }
 
   $('#btnPlace').onclick = () => {
+    // "Panaskan" speechSynthesis SEKARANG, sinkron di dalam tap asli ini.
+    // Safari sering membisukan speechSynthesis diam-diam kalau baru dipanggil
+    // nanti dari callback async (respons worker AI) tanpa pernah "dibuka" dulu
+    // langsung dari sentuhan pengguna.
+    if ('speechSynthesis' in window) {
+      try {
+        const warm = new SpeechSynthesisUtterance('');
+        warm.volume = 0;
+        speechSynthesis.speak(warm);
+        speechSynthesis.cancel();
+      } catch (e) {}
+    }
+
     const reticle = document.getElementById('reticle');
     const dragon = document.getElementById('dragon-entity');
     const bubble = document.getElementById('dragon-bubble');
