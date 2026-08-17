@@ -1384,81 +1384,43 @@
       return;
     }
 
-    // Selalu bunyikan suara bawaan browser DULU, sinkron di dalam tap user.
-    // Ini yang bikin suara selalu keluar di iOS Safari.
-    fallbackTTS(payload.text, onFinish);
-
-    // Kokoro (suara AI spasial) dipakai sebagai peningkatan kalau memang siap.
+    // --- Untuk Pesan Teks AI TTS ---
     const spatialComp = $('#dragon-mover').components['spatial-tts'];
-    if (window.isWorkerReady && window.globalTTSWorker && spatialComp) {
+
+    if (window.isWorkerReady && window.globalTTSWorker) {
+      toast("Meracik Suara Spasial AI 3D...");
+
       window.globalTTSWorker.postMessage({
         action: 'generate',
         text: payload.text,
         voice: (lang === 'en') ? "af_heart" : "af_bella"
       });
 
-      let settled = false;
-      const waitTimer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-      }, 8000);
-
       const handleWorkerResponse = (e) => {
-        if (settled) return;
         if (e.data.status === 'done') {
-          settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          // Jangan pernah memotong suara yang sudah terdengar. Kalau browser masih
-          // bicara, biarkan selesai -- lebih baik terdengar daripada berisiko sunyi.
-          let busy = false;
-          try { busy = window.speechSynthesis.speaking || window.speechSynthesis.pending; } catch (err) {}
-          if (!busy) spatialComp.playWorkerAudio(e.data.pcmData, () => {});
+          spatialComp.playWorkerAudio(e.data.pcmData, onFinish);
         } else if (e.data.status === 'error') {
-          settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
+          fallbackTTS(payload.text, onFinish);
         }
       };
 
       window.globalTTSWorker.addEventListener('message', handleWorkerResponse);
-    }
-  }
-
-  function pickVoice() {
-    let voices = [];
-    try { voices = window.speechSynthesis.getVoices() || []; } catch (e) {}
-    if (!voices.length) return null;
-    const want = (lang === 'id') ? 'id' : 'en';
-    return voices.find(v => v.lang && v.lang.toLowerCase().startsWith(want))
-        || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'))
-        || voices[0];
-  }
-
-  function fallbackTTS(text, onFinish) {
-    if (!('speechSynthesis' in window) || !text || text === '(Voice Message)') {
-      setTimeout(onFinish, 500);
       return;
     }
 
-    // WAJIB sinkron di dalam gesture user. Sedikit saja ditunda (setTimeout /
-    // menunggu daftar voice termuat), iOS Safari langsung membisukannya.
-    try {
+    fallbackTTS(payload.text, onFinish);
+  }
+
+  function fallbackTTS(text, onFinish) {
+    if ('speechSynthesis' in window && text && text !== '(Voice Message)') {
       const u = new SpeechSynthesisUtterance(text);
-
-      // Pasang voice HANYA kalau daftarnya kebetulan sudah siap. Kalau belum,
-      // jangan ditunggu -- biarkan browser pakai voice bawaannya.
-      const v = pickVoice();
-      if (v) { u.voice = v; u.lang = v.lang; }
-      else { u.lang = (lang === 'id') ? 'id-ID' : 'en-US'; }
-
-      u.rate = 1; u.pitch = 1.15; u.volume = 1;
-      u.onend = onFinish;
-      u.onerror = onFinish;
-
-      try { window.speechSynthesis.resume(); } catch (e) {}
-      window.speechSynthesis.speak(u);
-    } catch (e) {
-      onFinish();
+      u.lang = (lang === 'id') ? 'id-ID' : 'en-US';
+      u.onend = onFinish; u.onerror = onFinish;
+      speechSynthesis.speak(u);
+    } else {
+      setTimeout(onFinish, 1000);
     }
   }
 
@@ -1655,8 +1617,7 @@
     const wrapper = $('#scene-wrapper'); wrapper.style.visibility = 'visible'; wrapper.style.zIndex = '100';
     $('#ar-ui-container').hidden = false;
     $('#dragon-entity').setAttribute('visible', 'false'); $('#dragon-bubble').setAttribute('visible', 'false');
-    // cancel() saat tidak ada yang bicara merusak engine bicara Safari
-    try { if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel(); } catch (e) {}
+    window.speechSynthesis.cancel();
     $('#btnPlace').hidden = true; $('#btnReply').hidden = true; $('#btnBack').hidden = true;
     $('#arHint').hidden = false; $('#arHint').textContent = i18n[lang].arHintLoad;
 
