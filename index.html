@@ -443,15 +443,13 @@
         this.q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90deg sumbu X
         this.zee = new THREE.Vector3(0, 0, 1);
 
-        this.onOrientationChange = () => {
-          // Prioritaskan window.orientation: ini yang dipakai algoritma referensi three.js
-          // (DeviceOrientationControls) dan terbukti lebih konsisten di Safari/iPadOS
-          // dibanding screen.orientation.angle yang kadang telat update.
+        this.readAngle = () => {
           let angle = 0;
-          if (typeof window.orientation === 'number') angle = window.orientation;
-          else if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
-          this.orient = THREE.MathUtils.degToRad(angle);
+          if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
+          else if (typeof window.orientation === 'number') angle = window.orientation;
+          return THREE.MathUtils.degToRad(angle);
         };
+        this.onOrientationChange = () => { this.orient = this.readAngle(); };
 
         this.onDeviceOrientation = (e) => {
           if (e.alpha === null && e.beta === null && e.gamma === null) return;
@@ -484,7 +482,7 @@
         const q = this.el.object3D.quaternion;
         q.setFromEuler(this.euler);
         q.multiply(this.q1);                                       // layar tegak -> pandangan ke depan
-        q.multiply(this.q0.setFromAxisAngle(this.zee, -this.orient)); // koreksi rotasi layar
+        q.multiply(this.q0.setFromAxisAngle(this.zee, -this.readAngle())); // koreksi rotasi layar (dibaca tiap frame)
       },
 
       remove: function () {
@@ -1383,11 +1381,13 @@
       return;
     }
 
+    // Selalu bunyikan suara bawaan browser DULU, sinkron di dalam tap user.
+    // Ini yang bikin suara selalu keluar di iOS Safari.
+    fallbackTTS(payload.text, onFinish);
+
+    // Kokoro (suara AI spasial) dipakai sebagai peningkatan kalau memang siap.
     const spatialComp = $('#dragon-mover').components['spatial-tts'];
-
     if (window.isWorkerReady && window.globalTTSWorker && spatialComp) {
-      toast("Meracik Suara Spasial AI 3D...");
-
       window.globalTTSWorker.postMessage({
         action: 'generate',
         text: payload.text,
@@ -1395,45 +1395,80 @@
       });
 
       let settled = false;
-
-      // Jaring pengaman: kalau worker AI tidak pernah membalas (macet/gagal diam-diam,
-      // pernah terjadi di WASM Safari), jangan diam selamanya -- pindah ke suara bawaan browser.
       const waitTimer = setTimeout(() => {
         if (settled) return;
         settled = true;
         window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-        console.warn('TTS worker tidak merespons, pindah ke speechSynthesis bawaan.');
-        fallbackTTS(payload.text, onFinish);
-      }, 6000);
+      }, 8000);
 
       const handleWorkerResponse = (e) => {
         if (settled) return;
         if (e.data.status === 'done') {
           settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          spatialComp.playWorkerAudio(e.data.pcmData, onFinish);
+          try { window.speechSynthesis.cancel(); } catch (err) {}
+          spatialComp.playWorkerAudio(e.data.pcmData, () => {});
         } else if (e.data.status === 'error') {
           settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          fallbackTTS(payload.text, onFinish);
         }
       };
 
       window.globalTTSWorker.addEventListener('message', handleWorkerResponse);
-      return;
     }
+  }
 
-    fallbackTTS(payload.text, onFinish);
+  function pickVoice() {
+    let voices = [];
+    try { voices = window.speechSynthesis.getVoices() || []; } catch (e) {}
+    if (!voices.length) return null;
+    const want = (lang === 'id') ? 'id' : 'en';
+    return voices.find(v => v.lang && v.lang.toLowerCase().startsWith(want))
+        || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'))
+        || voices[0];
   }
 
   function fallbackTTS(text, onFinish) {
-    if ('speechSynthesis' in window && text && text !== '(Voice Message)') {
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = (lang === 'id') ? 'id-ID' : 'en-US';
-      u.onend = onFinish; u.onerror = onFinish;
-      speechSynthesis.speak(u);
+    if (!('speechSynthesis' in window) || !text || text === '(Voice Message)') {
+      setTimeout(onFinish, 500);
+      return;
+    }
+
+    const speak = () => {
+      try {
+        const u = new SpeechSynthesisUtterance(text);
+        const v = pickVoice();
+        if (v) u.voice = v;
+        u.lang = v && v.lang ? v.lang : ((lang === 'id') ? 'id-ID' : 'en-US');
+        u.rate = 1; u.pitch = 1.15; u.volume = 1;
+        u.onend = onFinish;
+        u.onerror = onFinish;
+
+        window.speechSynthesis.resume();
+        window.speechSynthesis.speak(u);
+
+        // Safari kadang antre tapi tidak pernah mulai: dorong sekali lagi.
+        setTimeout(() => {
+          try {
+            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+              window.speechSynthesis.resume();
+              window.speechSynthesis.speak(u);
+            } else {
+              window.speechSynthesis.resume();
+            }
+          } catch (e) {}
+        }, 350);
+      } catch (e) { onFinish(); }
+    };
+
+    // Daftar suara kadang belum termuat di panggilan pertama
+    let voices = [];
+    try { voices = window.speechSynthesis.getVoices() || []; } catch (e) {}
+    if (!voices.length) {
+      window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; };
+      setTimeout(speak, 60);
     } else {
-      setTimeout(onFinish, 1000);
+      speak();
     }
   }
 
@@ -1646,19 +1681,6 @@
   }
 
   $('#btnPlace').onclick = () => {
-    // "Panaskan" speechSynthesis SEKARANG, sinkron di dalam tap asli ini.
-    // Safari sering membisukan speechSynthesis diam-diam kalau baru dipanggil
-    // nanti dari callback async (respons worker AI) tanpa pernah "dibuka" dulu
-    // langsung dari sentuhan pengguna.
-    if ('speechSynthesis' in window) {
-      try {
-        const warm = new SpeechSynthesisUtterance('');
-        warm.volume = 0;
-        speechSynthesis.speak(warm);
-        speechSynthesis.cancel();
-      } catch (e) {}
-    }
-
     const reticle = document.getElementById('reticle');
     const dragon = document.getElementById('dragon-entity');
     const bubble = document.getElementById('dragon-bubble');
@@ -1706,10 +1728,11 @@
             deleteMsgByPayloadId(currentPayload.id);
         }
 
-        speakAndPlay(currentPayload, () => {
-           if (replyAllowed) $('#btnReply').hidden = false;
-           $('#btnBack').hidden = false;
-        });
+        // Tombol langsung tersedia, tidak menunggu audio selesai
+        if (replyAllowed) $('#btnReply').hidden = false;
+        $('#btnBack').hidden = false;
+
+        speakAndPlay(currentPayload, () => {});
       }
     }
   };
