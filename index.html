@@ -198,7 +198,7 @@
         this._pending = str;
 
         const DPR = 2;
-        const F = 34, LH = 46, PADX = 38, PADY = 30, R = 36, OUT = 9;
+        const F = 50, LH = 64, PADX = 38, PADY = 34, R = 36, OUT = 9;
         const TAILH = 44, TAILW = 50, MAXW = 470;
 
         const ctx = this.ctx;
@@ -1253,30 +1253,11 @@
       return;
     }
 
-    // --- Untuk Pesan Teks: TTS via MP3 + <audio> ---
-    // Dipakai jalur <audio> karena itu yang terbukti bersuara di iOS/iPadOS.
-    const text = (payload.text || '').trim();
-    if (!text || text === '(Voice Message)') { setTimeout(onFinish, 500); return; }
-
-    const voice = (lang === 'id') ? 'Damayanti' : 'Joanna';
-    const url = 'https://api.streamelements.com/kappa/v2/speech?voice=' + voice +
-                '&text=' + encodeURIComponent(text.slice(0, 500));
-
-    const tts = new Audio(url);
-
-    let finished = false;
-    const done = () => { if (!finished) { finished = true; onFinish(); } };
-
-    tts.onended = done;
-    tts.onerror = () => {
-      console.warn('TTS MP3 gagal, pakai suara bawaan browser.');
-      fallbackTTS(text, onFinish);
-    };
-
-    tts.play().catch(e => {
-      console.warn('TTS MP3 tidak bisa diputar:', e);
-      fallbackTTS(text, onFinish);
-    });
+    // --- Untuk Pesan Teks ---
+    // Dipanggil langsung & sinkron di dalam gesture user. Jangan pernah
+    // dibungkus percobaan async apa pun: iOS memblokir speechSynthesis
+    // begitu dipanggil di luar rantai sentuhan.
+    fallbackTTS(payload.text, onFinish);
   }
 
   function fallbackTTS(text, onFinish) {
