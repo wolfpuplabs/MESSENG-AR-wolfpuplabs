@@ -238,6 +238,48 @@
       }
     });
 
+    /* ========= HADAP KAMERA (yaw saja, badan tetap tegak) =========
+       Body naga diputar halus supaya selalu menghadap orang yang melihatnya,
+       seperti kurir yang menatap balik. Cuma rotasi horizontal (yaw) yang
+       diubah -- tidak ikut mendongak/menunduk -- supaya naga tetap berdiri wajar.
+       `offset` bisa disetel kalau arah "depan" modelnya ternyata berbeda dari
+       asumsi (uji coba di device asli, lalu geser 90/180 derajat kalau perlu). */
+    AFRAME.registerComponent('face-camera-yaw', {
+      schema: {
+        offset: { type: 'number', default: 0 },
+        speed:  { type: 'number', default: 6 }
+      },
+      init: function () {
+        this.camPos = new THREE.Vector3();
+        this.selfPos = new THREE.Vector3();
+        this.currentY = this.el.object3D.rotation.y;
+        this.hasCurrent = false;
+      },
+      tick: function (t, dt) {
+        const cam = this.el.sceneEl.camera;
+        if (!cam || !dt) return;
+
+        cam.getWorldPosition(this.camPos);
+        this.el.object3D.getWorldPosition(this.selfPos);
+
+        const dx = this.camPos.x - this.selfPos.x;
+        const dz = this.camPos.z - this.selfPos.z;
+        if (Math.abs(dx) < 1e-4 && Math.abs(dz) < 1e-4) return;
+
+        const target = Math.atan2(dx, dz) + THREE.MathUtils.degToRad(this.data.offset);
+
+        if (!this.hasCurrent) { this.currentY = target; this.hasCurrent = true; }
+
+        // interpolasi lewat jalur terpendek supaya tidak "muter jauh" saat melewati -180/180
+        let diff = target - this.currentY;
+        diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+
+        const rate = 1 - Math.exp(-this.data.speed * (dt / 1000));
+        this.currentY += diff * rate;
+        this.el.object3D.rotation.y = this.currentY;
+      }
+    });
+
     /* ========= BALON KOMIK: satu plane bertekstur canvas, lengkap dengan buntut ========= */
     AFRAME.registerComponent('comic-bubble', {
       schema: {
@@ -996,8 +1038,10 @@
       </a-entity>
 
       <a-entity id="dragon-mover" random-flight spatial-tts="refDistance: 1; maxDistance: 10; rolloffFactor: 1">
-        <a-entity id="dragon-model" gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.008 0.008 0.008" position="0 0 0" animation-mixer></a-entity>
-        <a-entity id="dragon-fire-dust" fire-dust position="0 0.08 -0.2" scale="3 3 3"></a-entity>
+        <a-entity id="dragon-facer" face-camera-yaw="offset: 0; speed: 6">
+          <a-entity id="dragon-model" gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.008 0.008 0.008" position="0 0 0" animation-mixer></a-entity>
+          <a-entity id="dragon-fire-dust" fire-dust position="0 0.08 -0.2" scale="3 3 3"></a-entity>
+        </a-entity>
 
         <a-entity id="dragon-bubble" look-at="[camera]" comic-bubble position="0 0.85 0" visible="false"></a-entity>
       </a-entity>
