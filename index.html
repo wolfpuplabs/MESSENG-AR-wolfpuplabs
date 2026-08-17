@@ -18,137 +18,6 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <script>
-    /* ================= SYSTEM AUDIO SPASIAL & WORKER GLOBAL ================= */
-    window.globalTTSWorker = null;
-    window.isWorkerReady = false;
-
-    const workerCode = `
-      import { KokoroTTS } from "https://esm.sh/kokoro-js";
-      let kokoroModel = null;
-
-      self.onmessage = async (event) => {
-        const { action, text, voice } = event.data;
-
-        if (action === 'init') {
-          try {
-            kokoroModel = await KokoroTTS.from_pretrained("hexgrad/Kokoro-82M", { device: "webgpu", dtype: "q8" });
-            self.postMessage({ status: 'ready', mode: 'WebGPU' });
-          } catch (e) {
-            try {
-              kokoroModel = await KokoroTTS.from_pretrained("hexgrad/Kokoro-82M", { device: "wasm", dtype: "q8" });
-              self.postMessage({ status: 'ready', mode: 'WASM' });
-            } catch (err) {
-              self.postMessage({ status: 'error', error: err.message });
-            }
-          }
-        }
-
-        if (action === 'generate') {
-          if (!kokoroModel) return self.postMessage({ status: 'error', error: "Model belum siap" });
-          try {
-            const audioData = await kokoroModel.generate(text, { voice: voice, speed: 1.0 });
-            self.postMessage({ status: 'done', pcmData: audioData.wav.buffer, sampleRate: 24000 }, [audioData.wav.buffer]);
-          } catch (err) {
-            self.postMessage({ status: 'error', error: err.message });
-          }
-        }
-      };
-    `;
-
-    try {
-      const blob = new Blob([workerCode], { type: 'application/javascript' });
-      window.globalTTSWorker = new Worker(URL.createObjectURL(blob), { type: 'module' });
-      window.globalTTSWorker.postMessage({ action: 'init' });
-
-      window.globalTTSWorker.onmessage = (e) => {
-        if (e.data.status === 'ready') {
-          window.isWorkerReady = true;
-          console.log("Worker AI TTS Siap:", e.data.mode);
-        }
-      };
-    } catch(e) { console.error("Worker gagal:", e); }
-
-    /* ================= KOMPONEN CUSTOM A-FRAME: SPATIAL-TTS ================= */
-    AFRAME.registerComponent('spatial-tts', {
-      schema: {
-        refDistance: { type: 'number', default: 1 },
-        maxDistance: { type: 'number', default: 10 },
-        rolloffFactor: { type: 'number', default: 1 }
-      },
-
-      init: function () {
-        this.sound = null;
-        this.listener = null;
-        this.audioCtx = null;
-
-        const setup = () => {
-          const camera = this.el.sceneEl.camera;
-          if (camera && !this.listener) {
-            this.listener = new THREE.AudioListener();
-            camera.add(this.listener);
-
-            this.sound = new THREE.PositionalAudio(this.listener);
-            this.sound.setRefDistance(this.data.refDistance);
-            this.sound.setMaxDistance(this.data.maxDistance);
-            this.sound.setRolloffFactor(this.data.rolloffFactor);
-            this.sound.setDistanceModel('linear');
-
-            this.el.object3D.add(this.sound);
-            this.audioCtx = this.listener.context;
-          }
-        };
-
-        this.el.sceneEl.addEventListener('render-target-loaded', setup);
-        this.el.sceneEl.addEventListener('loaded', setup);
-      },
-
-      playWorkerAudio: function (pcmArrayBuffer, onEndedCallback) {
-        if (!this.sound || !this.audioCtx) {
-          if (onEndedCallback) onEndedCallback();
-          return;
-        }
-
-        if (this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume();
-        }
-
-        let hasFinished = false;
-        const safeCallback = () => {
-          if (!hasFinished) {
-            hasFinished = true;
-            if (onEndedCallback) onEndedCallback();
-          }
-        };
-
-        const fallbackTimer = setTimeout(() => {
-          console.warn("Audio playback timeout, forcing UI update.");
-          safeCallback();
-        }, 8000);
-
-        this.audioCtx.decodeAudioData(pcmArrayBuffer, (buffer) => {
-          if (this.sound.isPlaying) this.sound.stop();
-
-          this.sound.setBuffer(buffer);
-          this.sound.play();
-
-          const source = this.sound.source;
-          if (source) {
-            source.onended = () => {
-              clearTimeout(fallbackTimer);
-              safeCallback();
-            };
-          } else {
-            clearTimeout(fallbackTimer);
-            safeCallback();
-          }
-        }, (err) => {
-          console.error("Gagal decode data Audio Worker:", err);
-          clearTimeout(fallbackTimer);
-          safeCallback();
-        });
-      }
-    });
-
     // Komponen Flight Naga
     AFRAME.registerComponent('random-flight', {
       init: function () {
@@ -1020,7 +889,7 @@
         <a-sphere id="magic-sphere" color="#ffffff" radius="0.05" material="shader: flat; transparent: true; opacity: 1"></a-sphere>
       </a-entity>
 
-      <a-entity id="dragon-mover" random-flight spatial-tts="refDistance: 1; maxDistance: 10; rolloffFactor: 1">
+      <a-entity id="dragon-mover" random-flight>
         <a-entity id="dragon-facer" face-camera-yaw="offset: 0; speed: 6">
           <a-entity id="dragon-model" gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.008 0.008 0.008" position="0 0 0" animation-mixer></a-entity>
           <a-entity id="dragon-fire-dust" fire-dust position="0 0.08 -0.2" scale="3 3 3"></a-entity>
@@ -1384,33 +1253,30 @@
       return;
     }
 
-    // --- Untuk Pesan Teks AI TTS ---
-    const spatialComp = $('#dragon-mover').components['spatial-tts'];
+    // --- Untuk Pesan Teks: TTS via MP3 + <audio> ---
+    // Dipakai jalur <audio> karena itu yang terbukti bersuara di iOS/iPadOS.
+    const text = (payload.text || '').trim();
+    if (!text || text === '(Voice Message)') { setTimeout(onFinish, 500); return; }
 
-    if (window.isWorkerReady && window.globalTTSWorker) {
-      toast("Meracik Suara Spasial AI 3D...");
+    const voice = (lang === 'id') ? 'Damayanti' : 'Joanna';
+    const url = 'https://api.streamelements.com/kappa/v2/speech?voice=' + voice +
+                '&text=' + encodeURIComponent(text.slice(0, 500));
 
-      window.globalTTSWorker.postMessage({
-        action: 'generate',
-        text: payload.text,
-        voice: (lang === 'en') ? "af_heart" : "af_bella"
-      });
+    const tts = new Audio(url);
 
-      const handleWorkerResponse = (e) => {
-        if (e.data.status === 'done') {
-          window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          spatialComp.playWorkerAudio(e.data.pcmData, onFinish);
-        } else if (e.data.status === 'error') {
-          window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          fallbackTTS(payload.text, onFinish);
-        }
-      };
+    let finished = false;
+    const done = () => { if (!finished) { finished = true; onFinish(); } };
 
-      window.globalTTSWorker.addEventListener('message', handleWorkerResponse);
-      return;
-    }
+    tts.onended = done;
+    tts.onerror = () => {
+      console.warn('TTS MP3 gagal, pakai suara bawaan browser.');
+      fallbackTTS(text, onFinish);
+    };
 
-    fallbackTTS(payload.text, onFinish);
+    tts.play().catch(e => {
+      console.warn('TTS MP3 tidak bisa diputar:', e);
+      fallbackTTS(text, onFinish);
+    });
   }
 
   function fallbackTTS(text, onFinish) {
