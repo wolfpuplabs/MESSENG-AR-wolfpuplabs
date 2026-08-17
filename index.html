@@ -1409,8 +1409,11 @@
         if (e.data.status === 'done') {
           settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
-          try { window.speechSynthesis.cancel(); } catch (err) {}
-          spatialComp.playWorkerAudio(e.data.pcmData, () => {});
+          // Jangan pernah memotong suara yang sudah terdengar. Kalau browser masih
+          // bicara, biarkan selesai -- lebih baik terdengar daripada berisiko sunyi.
+          let busy = false;
+          try { busy = window.speechSynthesis.speaking || window.speechSynthesis.pending; } catch (err) {}
+          if (!busy) spatialComp.playWorkerAudio(e.data.pcmData, () => {});
         } else if (e.data.status === 'error') {
           settled = true; clearTimeout(waitTimer);
           window.globalTTSWorker.removeEventListener('message', handleWorkerResponse);
@@ -1437,41 +1440,25 @@
       return;
     }
 
-    const speak = () => {
-      try {
-        const u = new SpeechSynthesisUtterance(text);
-        const v = pickVoice();
-        if (v) u.voice = v;
-        u.lang = v && v.lang ? v.lang : ((lang === 'id') ? 'id-ID' : 'en-US');
-        u.rate = 1; u.pitch = 1.15; u.volume = 1;
-        u.onend = onFinish;
-        u.onerror = onFinish;
+    // WAJIB sinkron di dalam gesture user. Sedikit saja ditunda (setTimeout /
+    // menunggu daftar voice termuat), iOS Safari langsung membisukannya.
+    try {
+      const u = new SpeechSynthesisUtterance(text);
 
-        window.speechSynthesis.resume();
-        window.speechSynthesis.speak(u);
+      // Pasang voice HANYA kalau daftarnya kebetulan sudah siap. Kalau belum,
+      // jangan ditunggu -- biarkan browser pakai voice bawaannya.
+      const v = pickVoice();
+      if (v) { u.voice = v; u.lang = v.lang; }
+      else { u.lang = (lang === 'id') ? 'id-ID' : 'en-US'; }
 
-        // Safari kadang antre tapi tidak pernah mulai: dorong sekali lagi.
-        setTimeout(() => {
-          try {
-            if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-              window.speechSynthesis.resume();
-              window.speechSynthesis.speak(u);
-            } else {
-              window.speechSynthesis.resume();
-            }
-          } catch (e) {}
-        }, 350);
-      } catch (e) { onFinish(); }
-    };
+      u.rate = 1; u.pitch = 1.15; u.volume = 1;
+      u.onend = onFinish;
+      u.onerror = onFinish;
 
-    // Daftar suara kadang belum termuat di panggilan pertama
-    let voices = [];
-    try { voices = window.speechSynthesis.getVoices() || []; } catch (e) {}
-    if (!voices.length) {
-      window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; };
-      setTimeout(speak, 60);
-    } else {
-      speak();
+      try { window.speechSynthesis.resume(); } catch (e) {}
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      onFinish();
     }
   }
 
