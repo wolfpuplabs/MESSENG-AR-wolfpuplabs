@@ -386,6 +386,71 @@
       }
     });
 
+    /* ========= KAMERA GYRO SADAR-ORIENTASI-LAYAR =========
+       look-controls bawaan A-Frame mengabaikan sudut layar, jadi tampilan miring
+       saat HP/tablet dipakai landscape. Komponen ini menghitung sendiri kuaternion
+       kamera dari deviceorientation + screen.orientation.angle. ================= */
+    AFRAME.registerComponent('magic-window', {
+      init: function () {
+        this.active = false;
+        this.orient = 0;
+        this.deviceOrientation = null;
+
+        this.euler = new THREE.Euler();
+        this.q0 = new THREE.Quaternion();
+        this.q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90deg sumbu X
+        this.zee = new THREE.Vector3(0, 0, 1);
+
+        this.onOrientationChange = () => {
+          let angle = 0;
+          if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
+          else if (typeof window.orientation === 'number') angle = window.orientation;
+          this.orient = THREE.MathUtils.degToRad(angle);
+        };
+
+        this.onDeviceOrientation = (e) => {
+          if (e.alpha === null && e.beta === null && e.gamma === null) return;
+          this.deviceOrientation = e;
+          if (!this.active && window.AR && AR.active && AR.mode !== 'webxr') {
+            this.active = true;
+            // matikan look-controls supaya tidak rebutan menulis rotasi kamera
+            this.el.setAttribute('look-controls', 'enabled', false);
+          }
+        };
+
+        this.onOrientationChange();
+        window.addEventListener('deviceorientation', this.onDeviceOrientation);
+        window.addEventListener('orientationchange', this.onOrientationChange);
+        if (screen.orientation && screen.orientation.addEventListener) {
+          screen.orientation.addEventListener('change', this.onOrientationChange);
+        }
+      },
+
+      tick: function () {
+        if (!this.active || !this.deviceOrientation) return;
+        if (!window.AR || !AR.active || AR.mode === 'webxr') return;
+
+        const d = this.deviceOrientation;
+        const alpha = THREE.MathUtils.degToRad(d.alpha || 0);
+        const beta  = THREE.MathUtils.degToRad(d.beta  || 0);
+        const gamma = THREE.MathUtils.degToRad(d.gamma || 0);
+
+        this.euler.set(beta, alpha, -gamma, 'YXZ');
+        const q = this.el.object3D.quaternion;
+        q.setFromEuler(this.euler);
+        q.multiply(this.q1);                                       // layar tegak -> pandangan ke depan
+        q.multiply(this.q0.setFromAxisAngle(this.zee, -this.orient)); // koreksi rotasi layar
+      },
+
+      remove: function () {
+        window.removeEventListener('deviceorientation', this.onDeviceOrientation);
+        window.removeEventListener('orientationchange', this.onOrientationChange);
+        if (screen.orientation && screen.orientation.removeEventListener) {
+          screen.orientation.removeEventListener('change', this.onOrientationChange);
+        }
+      }
+    });
+
     /* ========= HIT-TEST GYRO (fallback non-WebXR, jalan di semua device) ========= */
     AFRAME.registerComponent('gyro-hit-test', {
       init: function () {
@@ -419,7 +484,7 @@
         }
 
         let t = (AR.floorY - this._pos.y) / this._dir.y;
-        t = Math.min(Math.max(t, 0.7), 5.0);
+        t = Math.min(Math.max(t, 0.6), 1.8);
 
         this._hit.copy(this._pos).addScaledVector(this._dir, t);
         this._hit.y = AR.floorY;
@@ -888,7 +953,7 @@
 
 <div id="scene-wrapper" style="position: absolute; inset: 0; z-index: -100; visibility: hidden;">
   <a-scene webxr="optionalFeatures: hit-test, dom-overlay; overlayElement: #ar-ui-container;" renderer="colorManagement: true" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" background="transparent: true">
-    <a-camera id="camera" position="0 1.6 0" wasd-controls-enabled="false"></a-camera>
+    <a-camera id="camera" position="0 1.6 0" wasd-controls-enabled="false" magic-window></a-camera>
     <a-light type="directional" intensity="0.8" position="1 2 1"></a-light>
     <a-light type="ambient" intensity="0.6"></a-light>
     <a-entity id="xr-manager" webxr-hit-test gyro-hit-test></a-entity>
@@ -910,8 +975,8 @@
       </a-entity>
 
       <a-entity id="dragon-mover" random-flight spatial-tts="refDistance: 1; maxDistance: 10; rolloffFactor: 1">
-        <a-entity id="dragon-model" gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.006 0.006 0.006" position="0 0 0" animation-mixer></a-entity>
-        <a-entity id="dragon-fire-dust" fire-dust position="0 0.06 -0.15" scale="2.4 2.4 2.4"></a-entity>
+        <a-entity id="dragon-model" gltf-model="https://wolfpuplabs.github.io/MessengAR/dragon.glb" scale="0.008 0.008 0.008" position="0 0 0" animation-mixer></a-entity>
+        <a-entity id="dragon-fire-dust" fire-dust position="0 0.08 -0.2" scale="3 3 3"></a-entity>
 
         <a-entity id="dragon-bubble" look-at="[camera]" comic-bubble position="0 0.85 0" visible="false"></a-entity>
       </a-entity>
@@ -1380,9 +1445,12 @@
     $('#diorama-sky').setAttribute('visible', AR.mode === 'diorama');
 
     // Kontrol kamera: gyro (magic window) di HP, drag di desktop
+    // magicWindow bawaan dimatikan: rotasi gyro ditangani komponen magic-window
+    // (yang sadar sudut layar). look-controls hanya untuk drag di desktop/tanpa gyro.
     $('#camera').setAttribute('look-controls', {
-      magicWindowTrackingEnabled: true,
-      touchEnabled: !AR.hasGyro,
+      enabled: true,
+      magicWindowTrackingEnabled: false,
+      touchEnabled: true,
       mouseEnabled: true,
       pointerLockEnabled: false,
       reverseMouseDrag: false
@@ -1462,20 +1530,23 @@
   });
 
   /* ================= AR LOGIC & BUBBLE ================= */
-  /* Tinggi naga diukur otomatis dari model, jadi balon tidak pernah menimpa kepalanya */
-  let dragonTopY = 0.75;
-  (function measureDragon() {
-    const dm = $('#dragon-model');
-    if (!dm) return;
-    dm.addEventListener('model-loaded', () => {
-      try {
-        const box = new THREE.Box3().setFromObject(dm.object3D);
-        const moverY = $('#dragon-mover').object3D.position.y || 0;
-        const h = box.max.y - moverY;
-        if (isFinite(h) && h > 0.05) dragonTopY = h;
-      } catch (e) { console.warn('Gagal mengukur naga:', e); }
-    });
-  })();
+  /* Tinggi naga diukur otomatis dari model, jadi balon tidak pernah menimpa kepalanya.
+     Diukur ulang tepat saat "Tampilkan Pesan" ditekan (bukan cuma sekali di awal),
+     supaya tidak tergantung timing event 'model-loaded' yang gampang meleset. */
+  let dragonTopY = 0.95; // nilai cadangan jika pengukuran gagal
+  function measureDragonTop() {
+    try {
+      const dm = $('#dragon-model');
+      const mv = $('#dragon-mover');
+      if (!dm || !mv) return dragonTopY;
+      const box = new THREE.Box3().setFromObject(dm.object3D);
+      if (!isFinite(box.max.y) || !isFinite(box.min.y)) return dragonTopY;
+      const moverY = mv.object3D.position.y || 0;
+      const h = box.max.y - moverY;
+      if (isFinite(h) && h > 0.05 && h < 3) dragonTopY = h;
+    } catch (e) { console.warn('Gagal mengukur naga:', e); }
+    return dragonTopY;
+  }
 
   function openAR(payload) {
     currentPayload = payload;
@@ -1549,7 +1620,8 @@
         const comic = bubble.components['comic-bubble'];
         if (comic) comic.render(textStr);
 
-        bubble.setAttribute('position', `0 ${dragonTopY + 0.07} 0`);
+        const topY = measureDragonTop();
+        bubble.setAttribute('position', `0 ${topY + 0.1} 0`);
         bubble.setAttribute('visible', 'true');
         bubble.removeAttribute('animation__pop');
         bubble.setAttribute('animation__pop', { property: 'scale', from: '0.15 0.15 0.15', to: '1 1 1', dur: 420, easing: 'easeOutBack' });
